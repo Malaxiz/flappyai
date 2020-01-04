@@ -3,8 +3,20 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "watch": {
+    "build": {
+      "patterns": [
+        "src/"
+      ],
+      "extensions": "ts,html,css",
+      "runOnChangeOnly": false
+    }
+  },
   "scripts": {
-    "build": "webpack"
+    "build": "rm -rf ./dist/* && npm run build-js && npm run copy-files && echo 'Built successfully!'",
+    "build-js": "webpack",
+    "copy-files": "cp -r ./src/html/* ./dist",
+    "watch": "npm-watch"
   },
   "author": "",
   "license": "ISC",
@@ -17,7 +29,12 @@
     "@babel/preset-react": "^7.7.4",
     "@babel/preset-typescript": "^7.7.7",
     "babel-loader": "^8.0.6",
+    "babel-plugin-transform-class-properties": "^6.24.1",
+    "npm-watch": "^0.6.0",
     "webpack": "^4.41.5",
     "webpack-cli": "^3.3.10"
+  },
+  "dependencies": {
+    "rxjs": "^6.5.4"
   }
 }

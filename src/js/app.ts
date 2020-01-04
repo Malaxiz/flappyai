@@ -1,3 +1,3 @@
-import { a } from "./nn";
+import { createGame } from "./Game";
 
-console.log(a);
+createGame();

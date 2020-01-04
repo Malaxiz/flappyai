@@ -4,8 +4,14 @@
         [
             "@babel/env",
             {
-                "modules": false
+                "modules": false,
+                "targets": {
+                    "node": "current"
+                }
             }
-        ]
+        ],
+    ],
+    "plugins": [
+        "transform-class-properties"
     ]
 }
