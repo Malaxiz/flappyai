@@ -3,8 +3,9 @@ import Ctx from "./Ctx";
 import { Resources, Dimensions } from './Game';
 
 const PIPE_GAP = 100;
-const PIPE_MARGIN = 75;
+const PIPE_MARGIN = 0;
 const PIPE_SPEED = -3;
+const PIPE_ACCELERATION = -0.01;
 const BIRD_AMOUNT = 50;
 const BIRD_GRAVITY = 0.25;
 const BIRD_FORCE = -6;
@@ -12,7 +13,7 @@ const DEFAULT_FPS = 60.0;
 
 const NETWORK_INPUTS = 3;
 const NETWORK_OUTPUTS = 1;
-const NETWORK_STRUCTURE = [NETWORK_INPUTS, 3, NETWORK_OUTPUTS];
+const NETWORK_STRUCTURE = hidden => [NETWORK_INPUTS, ...hidden, NETWORK_OUTPUTS];
 
 export interface FlappyParams {
     ctx: Ctx
@@ -165,11 +166,13 @@ export default class Flappy {
     private birds: Bird[] = [];
     private pipes: Pipe[] = [];
 
+    private pipeSpeed = PIPE_SPEED;
     private score: number = 0;
     private maxScore: number = 0;
-    private generation: number = 1;
+    private generation: number = 0;
     private FPS: number = DEFAULT_FPS;
-    private pauseWhenHighscore: boolean = false;
+    private pauseWhenHighscore: boolean = true;
+    private desiredStructure: number[] = [2, 2];
 
     constructor(params: FlappyParams) {
         this.ctx = params.ctx;
@@ -187,7 +190,13 @@ export default class Flappy {
         document.querySelector('#speed-normal').addEventListener('click', () => this.FPS = DEFAULT_FPS);
         document.querySelector('#speed-super').addEventListener('click', () => this.FPS = -1);
         document.querySelector('#pause').addEventListener('click', ({ target }) => this.pauseWhenHighscore = (target as any).checked);
-        document.querySelector('#respawn').addEventListener('click', () => this.reset());
+        document.querySelector('#respawn').addEventListener('click', () => this.respawn());
+        document.querySelector('#reset').addEventListener('click', () => this.reset());
+        document.querySelector('#structure').addEventListener('input', ({ target }) => this.desiredStructure = (target as any).value);
+        document.querySelector('#set-structure').addEventListener('click', () => {
+            this.desiredStructure = JSON.parse(`[${this.desiredStructure}]`);
+            this.reset();
+        });
 
         this._loop();
     }
@@ -198,12 +207,22 @@ export default class Flappy {
         }
     }
 
-    private createBirds(getNet: () => NeuralNet): Bird[] {
-        return [...Array(BIRD_AMOUNT)]
+    private reset(): void {
+        this.pipes = [];
+        this.maxScore = 0;
+        this.score = 0;
+        this.generation = 0;
+        this.birds = [];
+        this.respawn();
+    }
+
+    private createBirds(amount: number, getNet: () => NeuralNet): Bird[] {
+        return [...Array(amount)]
             .map(() => new Bird(50, Dimensions[1] / 2, BIRD_GRAVITY, BIRD_FORCE, getNet()));
     }
 
-    private reset(): void {
+    private respawn(): void {
+        this.pipeSpeed = PIPE_SPEED;
         this.pipes = [];
         this.maxScore = Math.max(this.maxScore, this.score);
         this.score = 0;
@@ -211,7 +230,16 @@ export default class Flappy {
         const birds = this.birds.sort((a, b) => b.score - a.score);
         const [best] = birds;
 
-        this.birds = this.createBirds(best ? () => best.net.nextGeneration() : () => new NeuralNet(NETWORK_STRUCTURE));
+        const firstGen = () => new NeuralNet(NETWORK_STRUCTURE(this.desiredStructure));
+
+        if(best) {
+            this.birds = [
+                ...this.createBirds(BIRD_AMOUNT / 2, () => best.net.nextGeneration()),
+                ...this.createBirds(BIRD_AMOUNT / 2, firstGen)
+            ];
+        } else {
+            this.birds = this.createBirds(BIRD_AMOUNT, firstGen);
+        }
     }
 
     private _loop(): void {
@@ -233,13 +261,15 @@ export default class Flappy {
 
         if(birds.length <= 0) {
             this.generation++;
-            this.reset();
+            this.respawn();
             return;
         }
 
-        if(this.pipes.length <= 0)
+        if(this.pipes.length <= 0) {
+            this.pipeSpeed += PIPE_ACCELERATION;
             this.pipes = [...Array(1)]
-                .map(() => new Pipe(Dimensions[0], Math.random() * (Dimensions[1] - PIPE_GAP * 2 - PIPE_MARGIN * 2) + PIPE_GAP + PIPE_MARGIN, PIPE_SPEED));
+                .map(() => new Pipe(Dimensions[0], Math.random() * (Dimensions[1] - PIPE_GAP * 2 - PIPE_MARGIN * 2) + PIPE_GAP + PIPE_MARGIN, this.pipeSpeed));
+        }
 
         birds.forEach(bird => bird.loop(this.pipes));
         this.pipes.forEach(pipe => pipe.loop());

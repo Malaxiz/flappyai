@@ -17,10 +17,18 @@
     <div style="padding: 20px;">
         <button id="speed-normal">Normal speed</button>
         <button id="speed-super">Superspeed</button>
-        <button id="respawn">Respawn</button>
         <label for="">
-            <input type="checkbox" id="pause">
+            <input checked type="checkbox" id="pause">
             <span>Slow when highscore</span>
+        </label>
+        <br>
+        <button id="respawn">Respawn</button>
+        <button id="reset">Reset</button>
+        <label for="" title="Example:   2,2   3,5    6    100   ">
+            <span>Current network structure: </span>
+            <span id="active-structure"></span>
+            <input type="text" id="structure" value="2, 2">
+            <button id="set-structure">Set</button>
         </label>
     </div>
     <script src="./static/app.bundle.js"></script>

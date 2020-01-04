@@ -11,6 +11,12 @@ export interface CtxOptions {
     showFps?: boolean,
 };
 
+export const RenderPriority = {
+    Important: 30,
+    Text: 20,
+    Normal: 10
+};
+
 export type RenderFunction = (ctx: CanvasRenderingContext2D) => void;
 export type RenderTextFunction = () => string;
 export type RemoveRenderFunction = () => void;
@@ -26,7 +32,8 @@ export default class Ctx {
 
     private _queue: {
         func: RenderFunction,
-        alive: AliveFunction
+        alive: AliveFunction,
+        priority?: number
     }[] = [];
 
     private fps: number;
@@ -74,6 +81,7 @@ export default class Ctx {
             this.fps = 1e3 / (time - now);
             this.ctx.clearRect(0, 0, this.w, this.h);
             this._queue.filter(({alive}) => alive())
+                .sort((a, b) => +a.priority - +b.priority)
                 .forEach(({func}) => func(this.ctx));
 
             now = time;
@@ -82,8 +90,8 @@ export default class Ctx {
         req();
     }
 
-    public queue(func: RenderFunction, alive: AliveFunction): RemoveRenderFunction {
-        this._queue.push({ func, alive });
+    public queue(func: RenderFunction, alive: AliveFunction, priority: number = RenderPriority.Normal): RemoveRenderFunction {
+        this._queue.push({ func, alive, priority });
         return () => {
             const i = this._queue.findIndex(v => v.func == func);
             if(i == -1)
@@ -102,7 +110,7 @@ export default class Ctx {
 
             const [w, h, padv, padh] = this.textCoordinates[position]();
             ctx.fillText(text(), w + padh, h + (i + 1) * (this.size + padv));
-        }, alive);
+        }, alive, RenderPriority.Text);
 
         return () => {
             remove();

@@ -105,12 +105,13 @@ Object(_Game__WEBPACK_IMPORTED_MODULE_0__["createGame"])();
 /*!***********************!*\
   !*** ./src/js/Ctx.ts ***!
   \***********************/
-/*! exports provided: TextPosition, default */
+/*! exports provided: TextPosition, RenderPriority, default */
 /***/ (function(module, __webpack_exports__, __webpack_require__) {
 
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "TextPosition", function() { return TextPosition; });
+/* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "RenderPriority", function() { return RenderPriority; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "default", function() { return Ctx; });
 let TextPosition;
 
@@ -121,6 +122,11 @@ let TextPosition;
 
 ;
 ;
+const RenderPriority = {
+  Important: 30,
+  Text: 20,
+  Normal: 10
+};
 class Ctx {
   // font size
   constructor(options = {}) {
@@ -165,7 +171,7 @@ class Ctx {
 
       this._queue.filter(({
         alive
-      }) => alive()).forEach(({
+      }) => alive()).sort((a, b) => +a.priority - +b.priority).forEach(({
         func
       }) => func(this.ctx));
 
@@ -176,10 +182,11 @@ class Ctx {
     req();
   }
 
-  queue(func, alive) {
+  queue(func, alive, priority = RenderPriority.Normal) {
     this._queue.push({
       func,
-      alive
+      alive,
+      priority
     });
 
     return () => {
@@ -196,7 +203,7 @@ class Ctx {
       const i = this.text[position].findIndex(v => v == text);
       const [w, h, padv, padh] = this.textCoordinates[position]();
       ctx.fillText(text(), w + padh, h + (i + 1) * (this.size + padv));
-    }, alive);
+    }, alive, RenderPriority.Text);
     return () => {
       remove();
     };
@@ -221,15 +228,18 @@ __webpack_require__.r(__webpack_exports__);
 
 
 const PIPE_GAP = 100;
-const PIPE_MARGIN = 75;
+const PIPE_MARGIN = 0;
 const PIPE_SPEED = -3;
+const PIPE_ACCELERATION = -0.01;
 const BIRD_AMOUNT = 50;
 const BIRD_GRAVITY = 0.25;
 const BIRD_FORCE = -6;
 const DEFAULT_FPS = 60.0;
 const NETWORK_INPUTS = 3;
 const NETWORK_OUTPUTS = 1;
-const NETWORK_STRUCTURE = [NETWORK_INPUTS, 3, NETWORK_OUTPUTS];
+
+const NETWORK_STRUCTURE = hidden => [NETWORK_INPUTS, ...hidden, NETWORK_OUTPUTS];
+
 ;
 
 (function () {
@@ -353,11 +363,13 @@ class Flappy {
   constructor(params) {
     this.birds = [];
     this.pipes = [];
+    this.pipeSpeed = PIPE_SPEED;
     this.score = 0;
     this.maxScore = 0;
-    this.generation = 1;
+    this.generation = 0;
     this.FPS = DEFAULT_FPS;
-    this.pauseWhenHighscore = false;
+    this.pauseWhenHighscore = true;
+    this.desiredStructure = [2, 2];
     this.ctx = params.ctx;
     this.init();
   }
@@ -376,7 +388,15 @@ class Flappy {
     document.querySelector('#pause').addEventListener('click', ({
       target
     }) => this.pauseWhenHighscore = target.checked);
-    document.querySelector('#respawn').addEventListener('click', () => this.reset());
+    document.querySelector('#respawn').addEventListener('click', () => this.respawn());
+    document.querySelector('#reset').addEventListener('click', () => this.reset());
+    document.querySelector('#structure').addEventListener('input', ({
+      target
+    }) => this.desiredStructure = target.value);
+    document.querySelector('#set-structure').addEventListener('click', () => {
+      this.desiredStructure = JSON.parse(`[${this.desiredStructure}]`);
+      this.reset();
+    });
 
     this._loop();
   }
@@ -387,17 +407,34 @@ class Flappy {
     }
   }
 
-  createBirds(getNet) {
-    return [...Array(BIRD_AMOUNT)].map(() => new Bird(50, _Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][1] / 2, BIRD_GRAVITY, BIRD_FORCE, getNet()));
+  reset() {
+    this.pipes = [];
+    this.maxScore = 0;
+    this.score = 0;
+    this.generation = 0;
+    this.birds = [];
+    this.respawn();
   }
 
-  reset() {
+  createBirds(amount, getNet) {
+    return [...Array(amount)].map(() => new Bird(50, _Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][1] / 2, BIRD_GRAVITY, BIRD_FORCE, getNet()));
+  }
+
+  respawn() {
+    this.pipeSpeed = PIPE_SPEED;
     this.pipes = [];
     this.maxScore = Math.max(this.maxScore, this.score);
     this.score = 0;
     const birds = this.birds.sort((a, b) => b.score - a.score);
     const [best] = birds;
-    this.birds = this.createBirds(best ? () => best.net.nextGeneration() : () => new _NeuralNet__WEBPACK_IMPORTED_MODULE_0__["default"](NETWORK_STRUCTURE));
+
+    const firstGen = () => new _NeuralNet__WEBPACK_IMPORTED_MODULE_0__["default"](NETWORK_STRUCTURE(this.desiredStructure));
+
+    if (best) {
+      this.birds = [...this.createBirds(BIRD_AMOUNT / 2, () => best.net.nextGeneration()), ...this.createBirds(BIRD_AMOUNT / 2, firstGen)];
+    } else {
+      this.birds = this.createBirds(BIRD_AMOUNT, firstGen);
+    }
   }
 
   _loop() {
@@ -424,11 +461,15 @@ class Flappy {
 
     if (birds.length <= 0) {
       this.generation++;
-      this.reset();
+      this.respawn();
       return;
     }
 
-    if (this.pipes.length <= 0) this.pipes = [...Array(1)].map(() => new Pipe(_Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][0], Math.random() * (_Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][1] - PIPE_GAP * 2 - PIPE_MARGIN * 2) + PIPE_GAP + PIPE_MARGIN, PIPE_SPEED));
+    if (this.pipes.length <= 0) {
+      this.pipeSpeed += PIPE_ACCELERATION;
+      this.pipes = [...Array(1)].map(() => new Pipe(_Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][0], Math.random() * (_Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][1] - PIPE_GAP * 2 - PIPE_MARGIN * 2) + PIPE_GAP + PIPE_MARGIN, this.pipeSpeed));
+    }
+
     birds.forEach(bird => bird.loop(this.pipes));
     this.pipes.forEach(pipe => pipe.loop());
     this.score++;
