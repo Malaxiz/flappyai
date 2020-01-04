@@ -216,14 +216,45 @@ class Ctx {
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "default", function() { return Flappy; });
-/* harmony import */ var _Game__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./Game */ "./src/js/Game.ts");
+/* harmony import */ var _NeuralNet__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./NeuralNet */ "./src/js/NeuralNet.ts");
+/* harmony import */ var _Game__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./Game */ "./src/js/Game.ts");
+
 
 const PIPE_GAP = 100;
+const PIPE_MARGIN = 75;
 const PIPE_SPEED = -3;
 const BIRD_AMOUNT = 50;
 const BIRD_GRAVITY = 0.25;
 const BIRD_FORCE = -6;
+const DEFAULT_FPS = 60.0;
+const NETWORK_INPUTS = 3;
+const NETWORK_OUTPUTS = 1;
+const NETWORK_STRUCTURE = [NETWORK_INPUTS, 3, NETWORK_OUTPUTS];
 ;
+
+(function () {
+  var timeouts = [];
+  var messageName = "zero-timeout-message";
+
+  function setZeroTimeout(fn) {
+    timeouts.push(fn);
+    window.postMessage(messageName, "*");
+  }
+
+  function handleMessage(event) {
+    if (event.source == window && event.data == messageName) {
+      event.stopPropagation();
+
+      if (timeouts.length > 0) {
+        var fn = timeouts.shift();
+        fn();
+      }
+    }
+  }
+
+  window.addEventListener("message", handleMessage, true);
+  window.setZeroTimeout = setZeroTimeout;
+})();
 
 class Movable {
   constructor(x, y, w, h) {
@@ -247,18 +278,26 @@ class Movable {
 }
 
 class Bird {
-  constructor(x, y, g, force) {
+  constructor(x, y, g, force, net) {
     this.dead = false;
-    const dims = _Game__WEBPACK_IMPORTED_MODULE_0__["Resources"].bird.dimensions();
+    this.score = 0;
+    const dims = _Game__WEBPACK_IMPORTED_MODULE_1__["Resources"].bird.dimensions();
     this.pos = new Movable(x, y, dims[0], dims[1]);
     this.g = g;
     this.force = force;
+    this.net = net;
   }
 
   loop(pipes) {
-    if (this.pos.y > _Game__WEBPACK_IMPORTED_MODULE_0__["Dimensions"][1] || this.pos.y < 0) this.dead = true;
+    const [screenWidth, screenHeight] = _Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"];
+    if (this.pos.y > screenHeight || this.pos.y < 0) this.dead = true;
     if (pipes.some(pipe => pipe.collides(this.pos))) this.dead = true;
     if (this.dead) return;
+    this.score++;
+    const inputs = [this.pos.y / screenHeight, pipes[0].getHeight() / screenHeight, pipes[0].getX() / screenWidth]; // console.log(inputs);
+
+    const netResult = this.net.forward(inputs);
+    if (netResult[0] > .5) this.jump();
     this.pos.vY += this.g;
     this.pos.loop();
   }
@@ -268,7 +307,7 @@ class Bird {
   }
 
   draw(ctx) {
-    _Game__WEBPACK_IMPORTED_MODULE_0__["Resources"].bird.draw(ctx, this.pos.x, this.pos.y, null, null, Math.PI / 2 * this.pos.vY / 20);
+    _Game__WEBPACK_IMPORTED_MODULE_1__["Resources"].bird.draw(ctx, this.pos.x, this.pos.y, null, null, Math.PI / 2 * this.pos.vY / 20);
   }
 
 }
@@ -277,7 +316,7 @@ class Pipe {
   constructor(x, h, vX) {
     this.padding = PIPE_GAP;
     this.dead = false;
-    const dims = _Game__WEBPACK_IMPORTED_MODULE_0__["Resources"].pipeTop.dimensions();
+    const dims = _Game__WEBPACK_IMPORTED_MODULE_1__["Resources"].pipeTop.dimensions();
     this.top = new Movable(x, h - dims[1], dims[0], dims[1]);
     this.bottom = new Movable(x, h + this.padding, dims[0], dims[1]);
     this.top.vX = vX;
@@ -286,18 +325,26 @@ class Pipe {
   }
 
   loop() {
-    if (this.top.x + _Game__WEBPACK_IMPORTED_MODULE_0__["Resources"].pipeTop.dimensions()[0] < 0) this.dead = true;
+    if (this.top.x + _Game__WEBPACK_IMPORTED_MODULE_1__["Resources"].pipeTop.dimensions()[0] < 0) this.dead = true;
     this.top.loop();
     this.bottom.loop();
   }
 
   draw(ctx) {
-    _Game__WEBPACK_IMPORTED_MODULE_0__["Resources"].pipeTop.draw(ctx, this.top.x, this.h - _Game__WEBPACK_IMPORTED_MODULE_0__["Resources"].pipeTop.dimensions()[1]);
-    _Game__WEBPACK_IMPORTED_MODULE_0__["Resources"].pipeBottom.draw(ctx, this.bottom.x, this.h + this.padding); // ctx.fillRect(this.pos.x, this.h, Resources.pipeTop.dimensions()[0], this.padding);
+    _Game__WEBPACK_IMPORTED_MODULE_1__["Resources"].pipeTop.draw(ctx, this.top.x, this.h - _Game__WEBPACK_IMPORTED_MODULE_1__["Resources"].pipeTop.dimensions()[1]);
+    _Game__WEBPACK_IMPORTED_MODULE_1__["Resources"].pipeBottom.draw(ctx, this.bottom.x, this.h + this.padding); // ctx.fillRect(this.pos.x, this.h, Resources.pipeTop.dimensions()[0], this.padding);
   }
 
   collides(pos) {
     return this.top.collides(pos) || this.bottom.collides(pos);
+  }
+
+  getHeight() {
+    return this.h;
+  }
+
+  getX() {
+    return this.bottom.x;
   }
 
 }
@@ -305,19 +352,33 @@ class Pipe {
 class Flappy {
   constructor(params) {
     this.birds = [];
-    this.birdAmount = BIRD_AMOUNT;
     this.pipes = [];
     this.score = 0;
+    this.maxScore = 0;
+    this.generation = 1;
+    this.FPS = DEFAULT_FPS;
+    this.pauseWhenHighscore = false;
     this.ctx = params.ctx;
-    this.net = params.net;
     this.init();
   }
 
   init() {
-    setInterval(this.loop.bind(this), 1e3 / 60);
     this.ctx.queue(this.render.bind(this), () => true);
     this.ctx.queueText(() => `Score: ${this.score}`, () => true);
+    this.ctx.queueText(() => `Max score: ${this.maxScore}`, () => true);
+    this.ctx.queueText(() => `Birds: ${this.birds.filter(({
+      dead
+    }) => !dead).length}/${BIRD_AMOUNT}`, () => true);
+    this.ctx.queueText(() => `Generation: ${this.generation}`, () => true);
     document.addEventListener('keydown', this.event.bind(this));
+    document.querySelector('#speed-normal').addEventListener('click', () => this.FPS = DEFAULT_FPS);
+    document.querySelector('#speed-super').addEventListener('click', () => this.FPS = -1);
+    document.querySelector('#pause').addEventListener('click', ({
+      target
+    }) => this.pauseWhenHighscore = target.checked);
+    document.querySelector('#respawn').addEventListener('click', () => this.reset());
+
+    this._loop();
   }
 
   event(e) {
@@ -326,32 +387,61 @@ class Flappy {
     }
   }
 
+  createBirds(getNet) {
+    return [...Array(BIRD_AMOUNT)].map(() => new Bird(50, _Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][1] / 2, BIRD_GRAVITY, BIRD_FORCE, getNet()));
+  }
+
+  reset() {
+    this.pipes = [];
+    this.maxScore = Math.max(this.maxScore, this.score);
+    this.score = 0;
+    const birds = this.birds.sort((a, b) => b.score - a.score);
+    const [best] = birds;
+    this.birds = this.createBirds(best ? () => best.net.nextGeneration() : () => new _NeuralNet__WEBPACK_IMPORTED_MODULE_0__["default"](NETWORK_STRUCTURE));
+  }
+
+  _loop() {
+    this.loop();
+
+    if (this.FPS <= 0) {
+      window.setZeroTimeout(() => {
+        this._loop();
+      });
+    } else {
+      setTimeout(() => {
+        this._loop();
+      }, 1e3 / this.FPS);
+    }
+  }
+
   loop() {
-    this.birds = this.birds.filter(({
+    const birds = this.birds.filter(({
       dead
     }) => !dead);
     this.pipes = this.pipes.filter(({
       dead
     }) => !dead);
 
-    if (this.birds.length <= 0) {
-      this.pipes = [];
-      this.score = 0;
-      this.birds = [...Array(this.birdAmount)].map(() => new Bird(50, _Game__WEBPACK_IMPORTED_MODULE_0__["Dimensions"][1] / 2, BIRD_GRAVITY, BIRD_FORCE));
+    if (birds.length <= 0) {
+      this.generation++;
+      this.reset();
+      return;
     }
 
-    if (this.pipes.length <= 0) {
-      this.pipes = [...Array(1)].map(() => new Pipe(_Game__WEBPACK_IMPORTED_MODULE_0__["Dimensions"][0], Math.random() * (_Game__WEBPACK_IMPORTED_MODULE_0__["Dimensions"][1] - PIPE_GAP * 2) + PIPE_GAP, PIPE_SPEED));
-    }
-
-    this.birds.forEach(bird => bird.loop(this.pipes));
+    if (this.pipes.length <= 0) this.pipes = [...Array(1)].map(() => new Pipe(_Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][0], Math.random() * (_Game__WEBPACK_IMPORTED_MODULE_1__["Dimensions"][1] - PIPE_GAP * 2 - PIPE_MARGIN * 2) + PIPE_GAP + PIPE_MARGIN, PIPE_SPEED));
+    birds.forEach(bird => bird.loop(this.pipes));
     this.pipes.forEach(pipe => pipe.loop());
     this.score++;
+    if (this.score > this.maxScore && this.pauseWhenHighscore) this.FPS = DEFAULT_FPS;
   }
 
   render(ctx) {
-    this.birds.forEach(bird => bird.draw(ctx));
-    this.pipes.forEach(pipe => pipe.draw(ctx));
+    const dead = ({
+      dead
+    }) => !dead;
+
+    this.birds.filter(dead).forEach(bird => bird.draw(ctx));
+    this.pipes.filter(dead).forEach(pipe => pipe.draw(ctx));
   }
 
 }
@@ -371,23 +461,22 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "Dimensions", function() { return Dimensions; });
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "createGame", function() { return createGame; });
 /* harmony import */ var _Flappy__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./Flappy */ "./src/js/Flappy.ts");
-/* harmony import */ var _NeuralNet__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./NeuralNet */ "./src/js/NeuralNet.ts");
-/* harmony import */ var _Resource__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./Resource */ "./src/js/Resource.ts");
-/* harmony import */ var _Ctx__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(/*! ./Ctx */ "./src/js/Ctx.ts");
-
+/* harmony import */ var _Resource__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./Resource */ "./src/js/Resource.ts");
+/* harmony import */ var _Ctx__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./Ctx */ "./src/js/Ctx.ts");
 
 
 
 const Resources = {
-  pipeBottom: new _Resource__WEBPACK_IMPORTED_MODULE_2__["default"]('./static/pipebottom.png'),
-  pipeTop: new _Resource__WEBPACK_IMPORTED_MODULE_2__["default"]('./static/pipetop.png'),
-  bird: new _Resource__WEBPACK_IMPORTED_MODULE_2__["default"]('./static/bird.png'),
-  background: new _Resource__WEBPACK_IMPORTED_MODULE_2__["default"]('./static/background.png')
+  pipeBottom: new _Resource__WEBPACK_IMPORTED_MODULE_1__["default"]('./static/pipebottom.png'),
+  pipeTop: new _Resource__WEBPACK_IMPORTED_MODULE_1__["default"]('./static/pipetop.png'),
+  bird: new _Resource__WEBPACK_IMPORTED_MODULE_1__["default"]('./static/bird.png'),
+  background: new _Resource__WEBPACK_IMPORTED_MODULE_1__["default"]('./static/background.png')
 };
 const Dimensions = [300, 500];
 const createGame = async () => {
-  const ctx = new _Ctx__WEBPACK_IMPORTED_MODULE_3__["default"]({
+  const ctx = new _Ctx__WEBPACK_IMPORTED_MODULE_2__["default"]({
     showFps: true,
+    size: 18,
     w: Dimensions[0],
     h: Dimensions[1]
   });
@@ -395,11 +484,10 @@ const createGame = async () => {
   let loadedFiles = 0;
   const loading = files.map(([, v]) => v.load());
   loading.forEach(v => v.then(() => loadedFiles++));
-  const remove = [ctx.queueText(() => `Loading...`, () => true, _Ctx__WEBPACK_IMPORTED_MODULE_3__["TextPosition"].Middle), ctx.queueText(() => `${loadedFiles}/${files.length}`, () => true, _Ctx__WEBPACK_IMPORTED_MODULE_3__["TextPosition"].Middle)];
+  const remove = [ctx.queueText(() => `Loading...`, () => true, _Ctx__WEBPACK_IMPORTED_MODULE_2__["TextPosition"].Middle), ctx.queueText(() => `${loadedFiles}/${files.length}`, () => true, _Ctx__WEBPACK_IMPORTED_MODULE_2__["TextPosition"].Middle)];
   await Promise.all(loading);
   remove.forEach(v => v());
   return new _Flappy__WEBPACK_IMPORTED_MODULE_0__["default"]({
-    net: new _NeuralNet__WEBPACK_IMPORTED_MODULE_1__["default"](),
     ctx
   });
 };
@@ -416,7 +504,56 @@ const createGame = async () => {
 "use strict";
 __webpack_require__.r(__webpack_exports__);
 /* harmony export (binding) */ __webpack_require__.d(__webpack_exports__, "default", function() { return NeuralNet; });
-class NeuralNet {}
+// input, hidden[], output
+// const sigmoid = z => 1 / (1 + Math.pow(Math.E, -z));
+const random = () => Math.random() * 2 - 1;
+
+const sigmoid = z => 1 / (1 + Math.exp(-z / 1));
+
+const MUTATION_CHANCE = .2;
+const MUTATION_FORCE = .1;
+
+class Neuron {
+  constructor(inputs, weights) {
+    this.weights = weights || [...Array(inputs)].map(() => random());
+  }
+
+  forward(values) {
+    return sigmoid(values.map((v, i) => this.weights[i] * values[i]).reduce((a, v) => a + v, 0));
+  }
+
+  randomize() {
+    return new Neuron(null, this.weights.map(v => Math.random() > MUTATION_CHANCE ? v : v + random() * MUTATION_FORCE));
+  }
+
+}
+
+class NeuralNet {
+  constructor(structure, neurons) {
+    this.structure = structure;
+    this.neurons = neurons || structure.map((v, i, a) => [...Array(v)].map(() => new Neuron(i == 0 ? 0 : a[i - 1])));
+  }
+
+  forward(values) {
+    if (values.length != this.neurons[0].length) {
+      console.error('Input length not equal to input neuron layer');
+      return;
+    }
+
+    const result = [...Array(this.neurons.length)];
+    this.neurons.forEach((layer, i) => result[i] = i == 0 ? values : layer.map(neuron => neuron.forward(result[i - 1]))); // console.log(result);
+
+    return result[result.length - 1];
+  }
+
+  nextGeneration() {
+    return new NeuralNet(this.structure, this.neurons.map(layer => layer.map(neuron => neuron.randomize())));
+  } // public breed(a: NeuralNet, b: NeuralNet): NeuralNet {
+  //     return new NeuralNet(this.structure, this.neurons.map(layer => layer.map(neuron => )))
+  // }
+
+
+}
 
 /***/ }),
 

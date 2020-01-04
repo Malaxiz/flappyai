@@ -1,5 +1,4 @@
 import Flappy from "./Flappy";
-import NeuralNet from "./NeuralNet";
 import Resource from "./Resource";
 import Ctx, { TextPosition } from "./Ctx";
 
@@ -15,6 +14,7 @@ export const Dimensions = [300, 500];
 export const createGame = async () => {
     const ctx = new Ctx({
         showFps: true,
+        size: 18,
         w: Dimensions[0],
         h: Dimensions[1]
     });
@@ -34,7 +34,6 @@ export const createGame = async () => {
     remove.forEach(v => v());
 
     return new Flappy({
-        net: new NeuralNet(),
         ctx
     });
 }

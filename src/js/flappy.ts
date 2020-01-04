@@ -3,15 +3,44 @@ import Ctx from "./Ctx";
 import { Resources, Dimensions } from './Game';
 
 const PIPE_GAP = 100;
+const PIPE_MARGIN = 75;
 const PIPE_SPEED = -3;
 const BIRD_AMOUNT = 50;
 const BIRD_GRAVITY = 0.25;
 const BIRD_FORCE = -6;
+const DEFAULT_FPS = 60.0;
+
+const NETWORK_INPUTS = 3;
+const NETWORK_OUTPUTS = 1;
+const NETWORK_STRUCTURE = [NETWORK_INPUTS, 3, NETWORK_OUTPUTS];
 
 export interface FlappyParams {
-    net: NeuralNet,
     ctx: Ctx
 };
+
+(function() {
+	var timeouts = [];
+	var messageName = "zero-timeout-message";
+
+	function setZeroTimeout(fn) {
+		timeouts.push(fn);
+		window.postMessage(messageName, "*");
+	}
+
+	function handleMessage(event) {
+		if (event.source == window && event.data == messageName) {
+			event.stopPropagation();
+			if (timeouts.length > 0) {
+				var fn = timeouts.shift();
+				fn();
+			}
+		}
+	}
+
+	window.addEventListener("message", handleMessage, true);
+
+	(window as any).setZeroTimeout = setZeroTimeout;
+})();
 
 class Movable {
     public x: number;
@@ -47,20 +76,31 @@ class Bird {
     private force: number;
     private g: number;
 
+    public net: NeuralNet;
     public dead: boolean = false;
+    public score: number = 0;
     
-    constructor(x, y, g, force) {
+    constructor(x: number, y: number, g: number, force: number, net: NeuralNet) {
         const dims = Resources.bird.dimensions();
         this.pos = new Movable(x, y, dims[0], dims[1]);
         this.g = g;
         this.force = force;
+        this.net = net;
     }
 
     public loop(pipes: Pipe[]): void {
-        if(this.pos.y > Dimensions[1] || this.pos.y < 0) this.dead = true;
+        const [screenWidth, screenHeight] = Dimensions;
+
+        if(this.pos.y > screenHeight || this.pos.y < 0) this.dead = true;
         if(pipes.some(pipe => pipe.collides(this.pos))) this.dead = true;
 
         if(this.dead) return;
+        this.score++;
+
+        const inputs = [this.pos.y / screenHeight, pipes[0].getHeight() / screenHeight, pipes[0].getX() / screenWidth];
+        // console.log(inputs);
+        const netResult = this.net.forward(inputs);
+        if(netResult[0] > .5) this.jump();
 
         this.pos.vY += this.g;
         this.pos.loop();
@@ -109,32 +149,47 @@ class Pipe {
     public collides(pos: Movable): boolean {
         return this.top.collides(pos) || this.bottom.collides(pos);
     }
+
+    public getHeight(): number {
+        return this.h;
+    }
+
+    public getX(): number {
+        return this.bottom.x;
+    }
 }
 
 export default class Flappy {
     private ctx: Ctx;
-    private net: NeuralNet;
 
     private birds: Bird[] = [];
-    private birdAmount: number = BIRD_AMOUNT;
-
     private pipes: Pipe[] = [];
 
     private score: number = 0;
+    private maxScore: number = 0;
+    private generation: number = 1;
+    private FPS: number = DEFAULT_FPS;
+    private pauseWhenHighscore: boolean = false;
 
     constructor(params: FlappyParams) {
         this.ctx = params.ctx;
-        this.net = params.net;
         this.init();
     }
 
     private init(): void {
-        setInterval(this.loop.bind(this), 1e3/60);
         this.ctx.queue(this.render.bind(this), () => true);
-
         this.ctx.queueText(() => `Score: ${this.score}`, () => true);
+        this.ctx.queueText(() => `Max score: ${this.maxScore}`, () => true);
+        this.ctx.queueText(() => `Birds: ${this.birds.filter(({ dead }) => !dead).length}/${BIRD_AMOUNT}`, () => true);
+        this.ctx.queueText(() => `Generation: ${this.generation}`, () => true);
 
         document.addEventListener('keydown', this.event.bind(this));
+        document.querySelector('#speed-normal').addEventListener('click', () => this.FPS = DEFAULT_FPS);
+        document.querySelector('#speed-super').addEventListener('click', () => this.FPS = -1);
+        document.querySelector('#pause').addEventListener('click', ({ target }) => this.pauseWhenHighscore = (target as any).checked);
+        document.querySelector('#respawn').addEventListener('click', () => this.reset());
+
+        this._loop();
     }
 
     private event(e: KeyboardEvent) {
@@ -143,31 +198,61 @@ export default class Flappy {
         }
     }
 
-    private loop() {
-        this.birds = this.birds.filter(({ dead }) => !dead);
+    private createBirds(getNet: () => NeuralNet): Bird[] {
+        return [...Array(BIRD_AMOUNT)]
+            .map(() => new Bird(50, Dimensions[1] / 2, BIRD_GRAVITY, BIRD_FORCE, getNet()));
+    }
+
+    private reset(): void {
+        this.pipes = [];
+        this.maxScore = Math.max(this.maxScore, this.score);
+        this.score = 0;
+
+        const birds = this.birds.sort((a, b) => b.score - a.score);
+        const [best] = birds;
+
+        this.birds = this.createBirds(best ? () => best.net.nextGeneration() : () => new NeuralNet(NETWORK_STRUCTURE));
+    }
+
+    private _loop(): void {
+        this.loop();
+        if(this.FPS <= 0) {
+            (window as any).setZeroTimeout(() => {
+                this._loop();
+            });
+        } else {
+            setTimeout(() => {
+                this._loop();
+            }, 1e3/ this.FPS );
+        }
+    }
+
+    private loop(): void {
+        const birds = this.birds.filter(({ dead }) => !dead);
         this.pipes = this.pipes.filter(({ dead }) => !dead);
 
-        if(this.birds.length <= 0) {
-            this.pipes = [];
-            this.score = 0;
-
-            this.birds = [...Array(this.birdAmount)]
-                .map(() => new Bird(50, Dimensions[1] / 2, BIRD_GRAVITY, BIRD_FORCE));
+        if(birds.length <= 0) {
+            this.generation++;
+            this.reset();
+            return;
         }
 
-        if(this.pipes.length <= 0) {
+        if(this.pipes.length <= 0)
             this.pipes = [...Array(1)]
-                .map(() => new Pipe(Dimensions[0], Math.random() * (Dimensions[1] - PIPE_GAP * 2) + PIPE_GAP, PIPE_SPEED));
-        }
+                .map(() => new Pipe(Dimensions[0], Math.random() * (Dimensions[1] - PIPE_GAP * 2 - PIPE_MARGIN * 2) + PIPE_GAP + PIPE_MARGIN, PIPE_SPEED));
 
-        this.birds.forEach(bird => bird.loop(this.pipes));
+        birds.forEach(bird => bird.loop(this.pipes));
         this.pipes.forEach(pipe => pipe.loop());
 
         this.score++;
+        if(this.score > this.maxScore && this.pauseWhenHighscore)
+            this.FPS = DEFAULT_FPS;
     }
 
     private render(ctx: CanvasRenderingContext2D) {
-        this.birds.forEach(bird => bird.draw(ctx));
-        this.pipes.forEach(pipe => pipe.draw(ctx));
+        const dead = ({ dead }) => !dead;
+
+        this.birds.filter(dead).forEach(bird => bird.draw(ctx));
+        this.pipes.filter(dead).forEach(pipe => pipe.draw(ctx));
     }
 }
