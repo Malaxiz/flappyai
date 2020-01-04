@@ -3,23 +3,27 @@ import NeuralNet from "./NeuralNet";
 import Resource from "./Resource";
 import Ctx, { TextPosition } from "./Ctx";
 
+export const Resources = {
+    pipeBottom: new Resource('./static/pipebottom.png'),
+    pipeTop: new Resource('./static/pipetop.png'),
+    bird: new Resource('./static/bird.png'),
+    background: new Resource('./static/background.png')
+};
+
+export const Dimensions = [300, 500];
+
 export const createGame = async () => {
     const ctx = new Ctx({
-        showFps: true
+        showFps: true,
+        w: Dimensions[0],
+        h: Dimensions[1]
     });
 
-    const resources = {
-        pipeBottom: new Resource('./static/pipebottom.png'),
-        pipeTop: new Resource('./static/pipetop.png'),
-        bird: new Resource('./static/bird.png'),
-        background: new Resource('./static/background.png')
-    };
-    
-    const files = Object.entries(resources);
+    const files = Object.entries(Resources);
     let loadedFiles = 0;
 
     const loading = files.map(([,v]) => v.load());
-    loading.forEach(v => v.then(() => loadedFiles++).catch(() => loadedFiles++));
+    loading.forEach(v => v.then(() => loadedFiles++));
 
     const remove = [
         ctx.queueText(() => `Loading...`, () => true, TextPosition.Middle),
@@ -27,12 +31,10 @@ export const createGame = async () => {
     ]
 
     await Promise.all(loading);
-
     remove.forEach(v => v());
 
     return new Flappy({
         net: new NeuralNet(),
-        ctx,
-        resources
+        ctx
     });
 }

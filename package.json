@@ -15,7 +15,7 @@
   "scripts": {
     "build": "rm -rf ./dist/* && npm run build-js && npm run copy-files && echo 'Built successfully!'",
     "build-js": "webpack",
-    "copy-files": "cp -r ./src/html/* ./dist",
+    "copy-files": "mkdir -p ./dist/static/ && cp -r ./src/html/* ./dist && cp -r ./resources/* ./dist/static/",
     "watch": "npm-watch"
   },
   "author": "",
